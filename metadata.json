@@ -1,0 +1,6 @@
+{
+  "name": "OCR Quiz Craft",
+  "description": "AI-powered document and image OCR analyzer with interactive quiz maker, discrete and forgiving scoring, mistake explanations, and quiz history.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
