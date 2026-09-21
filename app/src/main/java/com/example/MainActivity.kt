@@ -108,7 +108,7 @@ class MainActivity : ComponentActivity() {
                                         modifier = Modifier.size(24.dp)
                                     )
                                     Text(
-                                        text = "OCR Quiz Craft",
+                                        text = "Quizzy",
                                         fontWeight = FontWeight.ExtraBold
                                     )
                                 }

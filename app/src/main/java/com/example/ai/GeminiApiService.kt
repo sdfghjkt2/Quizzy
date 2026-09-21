@@ -355,7 +355,7 @@ object GeminiApiService {
             }
             return GeneratedQuizResponse(title = title, summary = summary, questions = questions)
         } catch (e: Exception) {
-            return GeneratedQuizResponse(title = "OCR Quiz", questions = emptyList())
+            return GeneratedQuizResponse(title = "Quizzy", questions = emptyList())
         }
     }
 }
