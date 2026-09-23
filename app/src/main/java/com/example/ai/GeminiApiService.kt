@@ -17,9 +17,20 @@ import java.util.concurrent.TimeUnit
 object GeminiApiService {
 
     private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/"
-    // Model selection per SKILL guidelines:
-    private const val MODEL_FLASH = "gemini-3.5-flash"
-    private const val MODEL_PRO = "gemini-3.1-pro-preview"
+    private val MODEL_CANDIDATES_FLASH = listOf(
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-2.5-flash-lite",
+        "gemini-flash"
+    )
+    private val MODEL_CANDIDATES_PRO = listOf(
+        "gemini-2.5-pro",
+        "gemini-2.5-flash",
+        "gemini-2.0-flash",
+        "gemini-3.5-flash-lite",
+        "gemini-2.5-flash-lite"
+    )
 
     private val okHttpClient = OkHttpClient.Builder()
         .connectTimeout(60, TimeUnit.SECONDS)
@@ -53,7 +64,6 @@ object GeminiApiService {
         customUserPrompt: String?
     ): Pair<String, DocumentAnalysis> = withContext(Dispatchers.IO) {
         val apiKey = getApiKey()
-        val endpoint = "$BASE_URL$MODEL_FLASH:generateContent?key=$apiKey"
 
         val contentsArray = JSONArray()
         val partsArray = JSONArray()
@@ -104,7 +114,7 @@ object GeminiApiService {
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemInstructionText))))
             .put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
 
-        val responseString = executePostRequest(endpoint, requestJson.toString())
+        val responseString = executeWithModelFallback(MODEL_CANDIDATES_FLASH, requestJson.toString())
         val parsedText = extractCandidateText(responseString)
 
         try {
@@ -147,7 +157,6 @@ object GeminiApiService {
         config: QuizGenerationConfig
     ): GeneratedQuizResponse = withContext(Dispatchers.IO) {
         val apiKey = getApiKey()
-        val endpoint = "$BASE_URL$MODEL_PRO:generateContent?key=$apiKey"
 
         val questionTypeInstruction = when (config.questionTypeMode) {
             QuestionTypeMode.OBJECTIVE -> "Create ONLY OBJECTIVE multiple-choice questions (questionType = 'OBJECTIVE') with 4 options (A, B, C, D) in the 'options' array, and 'correctAnswer' matching the exact option text."
@@ -201,7 +210,7 @@ object GeminiApiService {
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
             .put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
 
-        val responseString = executePostRequest(endpoint, requestJson.toString())
+        val responseString = executeWithModelFallback(MODEL_CANDIDATES_PRO, requestJson.toString())
         val parsedJsonText = extractCandidateText(responseString)
 
         try {
@@ -226,7 +235,6 @@ object GeminiApiService {
         scoringMode: ScoringMode
     ): AnswerEvaluationResult = withContext(Dispatchers.IO) {
         val apiKey = getApiKey()
-        val endpoint = "$BASE_URL$MODEL_PRO:generateContent?key=$apiKey"
 
         val evaluationRules = if (scoringMode == ScoringMode.DISCRETE) {
             """
@@ -274,7 +282,7 @@ object GeminiApiService {
             .put("systemInstruction", JSONObject().put("parts", JSONArray().put(JSONObject().put("text", systemPrompt))))
             .put("generationConfig", JSONObject().put("responseMimeType", "application/json"))
 
-        val responseString = executePostRequest(endpoint, requestJson.toString())
+        val responseString = executeWithModelFallback(MODEL_CANDIDATES_PRO, requestJson.toString())
         val parsedJsonText = extractCandidateText(responseString)
 
         try {
@@ -299,19 +307,37 @@ object GeminiApiService {
         }
     }
 
-    private fun executePostRequest(url: String, jsonBody: String): String {
-        val body = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
-        val request = Request.Builder()
-            .url(url)
-            .post(body)
-            .build()
+    private fun executeWithModelFallback(modelCandidates: List<String>, jsonBody: String): String {
+        val apiKey = getApiKey()
+        var lastException: Exception? = null
+        for (model in modelCandidates) {
+            val endpoint = "$BASE_URL$model:generateContent?key=$apiKey"
+            try {
+                val body = jsonBody.toRequestBody("application/json; charset=utf-8".toMediaType())
+                val request = Request.Builder()
+                    .url(endpoint)
+                    .post(body)
+                    .build()
 
-        val response = okHttpClient.newCall(request).execute()
-        val responseText = response.body?.string() ?: ""
-        if (!response.isSuccessful) {
-            throw IllegalStateException("Gemini API Error ${response.code}: $responseText")
+                val response = okHttpClient.newCall(request).execute()
+                val responseText = response.body?.string() ?: ""
+                if (response.isSuccessful) {
+                    return responseText
+                } else {
+                    val code = response.code
+                    if (code == 429 || code >= 500 || responseText.contains("RESOURCE_EXHAUSTED", ignoreCase = true) || responseText.contains("overloaded", ignoreCase = true)) {
+                        lastException = IllegalStateException("Model $model rate limited/error ($code): $responseText")
+                        continue
+                    } else {
+                        throw IllegalStateException("Gemini API Error $code: $responseText")
+                    }
+                }
+            } catch (e: Exception) {
+                lastException = e
+                continue
+            }
         }
-        return responseText
+        throw lastException ?: IllegalStateException("All Gemini fallback models exhausted.")
     }
 
     private fun extractCandidateText(rawResponseJson: String): String {
